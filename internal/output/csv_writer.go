@@ -2,30 +2,37 @@ package output
 
 import (
 	"encoding/csv"
-	"io"
+	"fmt"
+	"os"
 	"strconv"
 
-	"SBCFAA/internal/models"
+	"SBCFAA/internal/fare"
 )
 
-// WriteCSV writes fare estimates to a CSV file
-func WriteCSV(writer io.Writer, estimates []models.FareEstimate) error {
-	csvWriter := csv.NewWriter(writer)
-	defer csvWriter.Flush()
+// WriteCSV writes the fare estimates to a CSV file
+func WriteCSV(filename string, estimates []fare.FareEstimate) error {
+	file, err := os.Create(filename)
+	if err != nil {
+		return fmt.Errorf("error creating file: %v", err)
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
 
 	// Write header
-	if err := csvWriter.Write([]string{"id_delivery", "fare_estimate"}); err != nil {
-		return err
+	if err := writer.Write([]string{"id_delivery", "fare_estimate"}); err != nil {
+		return fmt.Errorf("error writing header: %v", err)
 	}
 
 	// Write data
 	for _, estimate := range estimates {
-		record := []string{
+		row := []string{
 			strconv.FormatInt(estimate.DeliveryID, 10),
 			strconv.FormatFloat(estimate.Fare, 'f', 2, 64),
 		}
-		if err := csvWriter.Write(record); err != nil {
-			return err
+		if err := writer.Write(row); err != nil {
+			return fmt.Errorf("error writing row: %v", err)
 		}
 	}
 

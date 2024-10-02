@@ -2,89 +2,98 @@ package ingestion
 
 import (
 	"encoding/csv"
+	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"time"
 
-	"SBCFAA/internal/models"
+	"SBCFAA/pkg/utils"
 )
 
-// ReadCSV reads delivery points from a CSV file
-func ReadCSV(reader io.Reader) ([]models.DeliveryPoint, error) {
-	csvReader := csv.NewReader(reader)
-	csvReader.FieldsPerRecord = 4 // id_delivery, lat, lng, timestamp
+type DeliveryPoint struct {
+	ID        int64
+	Lat, Lng  float64
+	Timestamp int64
+}
 
-	// Read and discard header
-	if _, err := csvReader.Read(); err != nil {
-		return nil, err
+func ReadAndFilterCSV(filename string) ([]DeliveryPoint, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("error opening file: %v", err)
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	reader.FieldsPerRecord = 4 // We expect 4 fields per record
+
+	// Skip header
+	if _, err := reader.Read(); err != nil {
+		return nil, fmt.Errorf("error reading header: %v", err)
 	}
 
-	var points []models.DeliveryPoint
+	var filteredData []DeliveryPoint
+	var prevPoint *DeliveryPoint
+
 	for {
-		record, err := csvReader.Read()
+		record, err := reader.Read()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error reading record: %v", err)
 		}
 
-		point, err := parseDeliveryPoint(record)
+		point, err := parseRecord(record)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("error parsing record: %v", err)
 		}
 
-		points = append(points, point)
+		if prevPoint != nil && prevPoint.ID == point.ID {
+			speed := calculateSpeed(*prevPoint, point)
+			if speed <= 100 { // 100 km/h filter
+				filteredData = append(filteredData, point)
+			}
+		} else {
+			filteredData = append(filteredData, point)
+		}
+
+		prevPoint = &point
 	}
 
-	return points, nil
+	return filteredData, nil
 }
 
-// parseDeliveryPoint converts a slice of strings to a DeliveryPoint
-func parseDeliveryPoint(record []string) (models.DeliveryPoint, error) {
-	id, err := parseID(record[0])
+func parseRecord(record []string) (DeliveryPoint, error) {
+	id, err := strconv.ParseInt(record[0], 10, 64)
 	if err != nil {
-		return models.DeliveryPoint{}, err
+		return DeliveryPoint{}, fmt.Errorf("invalid id: %v", err)
 	}
 
-	lat, err := parseFloat(record[1])
+	lat, err := strconv.ParseFloat(record[1], 64)
 	if err != nil {
-		return models.DeliveryPoint{}, err
+		return DeliveryPoint{}, fmt.Errorf("invalid latitude: %v", err)
 	}
 
-	lng, err := parseFloat(record[2])
+	lng, err := strconv.ParseFloat(record[2], 64)
 	if err != nil {
-		return models.DeliveryPoint{}, err
+		return DeliveryPoint{}, fmt.Errorf("invalid longitude: %v", err)
 	}
 
-	timestamp, err := parseTimestamp(record[3])
+	timestamp, err := strconv.ParseInt(record[3], 10, 64)
 	if err != nil {
-		return models.DeliveryPoint{}, err
+		return DeliveryPoint{}, fmt.Errorf("invalid timestamp: %v", err)
 	}
 
-	return models.DeliveryPoint{
-		ID:        id,
-		Latitude:  lat,
-		Longitude: lng,
-		Timestamp: timestamp,
-	}, nil
+	return DeliveryPoint{ID: id, Lat: lat, Lng: lng, Timestamp: timestamp}, nil
 }
 
-// parseID converts a string to an int64
-func parseID(s string) (int64, error) {
-	return strconv.ParseInt(s, 10, 64)
-}
-
-// parseFloat converts a string to a float64
-func parseFloat(s string) (float64, error) {
-	return strconv.ParseFloat(s, 64)
-}
-
-// parseTimestamp converts a string (assumed to be Unix timestamp) to time.Time
-func parseTimestamp(s string) (time.Time, error) {
-	i, err := strconv.ParseInt(s, 10, 64)
-	if err != nil {
-		return time.Time{}, err
+func calculateSpeed(p1, p2 DeliveryPoint) float64 {
+	distance := utils.HaversineDistance(p1.Lat, p1.Lng, p2.Lat, p2.Lng)
+	duration := time.Duration(p2.Timestamp-p1.Timestamp) * time.Second
+	hours := duration.Hours()
+	if hours == 0 {
+		return 0
 	}
-	return time.Unix(i, 0), nil
+	return distance / hours // km/h
 }
