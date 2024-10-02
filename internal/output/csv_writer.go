@@ -2,18 +2,20 @@ package output
 
 import (
 	"encoding/csv"
-	"fmt"
+	"log"
 	"os"
 	"strconv"
+	"sync"
 
-	"SBCFAA/internal/fare"
+	"SBCFAA/internal/models"
 )
 
-// WriteCSV writes the fare estimates to a CSV file
-func WriteCSV(filename string, estimates []fare.FareEstimate) error {
+const bufferSize = 1000
+
+func WriteCSV(filename string, estimates <-chan []models.FareEstimate) error {
 	file, err := os.Create(filename)
 	if err != nil {
-		return fmt.Errorf("error creating file: %v", err)
+		return err
 	}
 	defer file.Close()
 
@@ -22,19 +24,41 @@ func WriteCSV(filename string, estimates []fare.FareEstimate) error {
 
 	// Write header
 	if err := writer.Write([]string{"id_delivery", "fare_estimate"}); err != nil {
-		return fmt.Errorf("error writing header: %v", err)
+		return err
 	}
 
-	// Write data
-	for _, estimate := range estimates {
-		row := []string{
-			strconv.FormatInt(estimate.DeliveryID, 10),
-			strconv.FormatFloat(estimate.Fare, 'f', 2, 64),
-		}
-		if err := writer.Write(row); err != nil {
-			return fmt.Errorf("error writing row: %v", err)
-		}
-	}
+	var wg sync.WaitGroup
+	wg.Add(1)
 
+	go func() {
+		defer wg.Done()
+		buffer := make([][]string, 0, bufferSize)
+
+		for chunk := range estimates {
+			for _, estimate := range chunk {
+				buffer = append(buffer, []string{
+					strconv.FormatInt(estimate.DeliveryID, 10),
+					strconv.FormatFloat(estimate.Fare, 'f', 2, 64),
+				})
+
+				if len(buffer) >= bufferSize {
+					if err := writer.WriteAll(buffer); err != nil {
+						// Log the error, but continue processing
+						log.Printf("Error writing to CSV: %v", err)
+					}
+					buffer = buffer[:0] // Clear the buffer
+				}
+			}
+		}
+
+		// Write any remaining records
+		if len(buffer) > 0 {
+			if err := writer.WriteAll(buffer); err != nil {
+				log.Printf("Error writing final buffer to CSV: %v", err)
+			}
+		}
+	}()
+
+	wg.Wait()
 	return nil
 }

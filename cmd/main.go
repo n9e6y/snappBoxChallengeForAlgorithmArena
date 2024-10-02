@@ -2,11 +2,11 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"os"
 	"runtime"
 	"runtime/pprof"
+	"time"
 
 	"SBCFAA/internal/fare"
 	"SBCFAA/internal/ingestion"
@@ -39,25 +39,29 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
+	startTime := time.Now()
+
 	// Read and filter input data
-	fmt.Println("Reading and filtering input data...")
-	filteredData, err := ingestion.ReadAndFilterCSV(*inputFile)
-	if err != nil {
-		log.Fatalf("Error reading input data: %v", err)
-	}
+	log.Println("Reading and filtering input data...")
+	pointsChan, errChan := ingestion.ReadAndFilterCSV(*inputFile)
 
 	// Calculate fares
-	fmt.Println("Calculating fares...")
-	fareEstimates := fare.CalculateFares(filteredData)
+	log.Println("Calculating fares...")
+	estimatesChan := fare.CalculateFares(pointsChan)
 
 	// Write results to CSV
-	fmt.Println("Writing results to CSV...")
-	err = output.WriteCSV(*outputFile, fareEstimates)
-	if err != nil {
+	log.Println("Writing results to CSV...")
+	if err := output.WriteCSV(*outputFile, estimatesChan); err != nil {
 		log.Fatalf("Error writing output data: %v", err)
 	}
 
-	fmt.Printf("Fare estimation completed successfully. Results written to %s\n", *outputFile)
+	// Check for any errors from reading/filtering
+	for err := range errChan {
+		log.Printf("Error during processing: %v", err)
+	}
+
+	duration := time.Since(startTime)
+	log.Printf("Fare estimation completed successfully in %v. Results written to %s\n", duration, *outputFile)
 
 	// Memory profiling
 	if *memProfile != "" {

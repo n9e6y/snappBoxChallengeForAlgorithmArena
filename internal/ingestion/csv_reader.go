@@ -1,6 +1,8 @@
 package ingestion
 
 import (
+	"SBCFAA/pkg/utils"
+	"bufio"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -8,92 +10,117 @@ import (
 	"strconv"
 	"time"
 
-	"SBCFAA/pkg/utils"
+	"SBCFAA/internal/models"
 )
 
-type DeliveryPoint struct {
-	ID        int64
-	Lat, Lng  float64
-	Timestamp int64
-}
+func ReadAndFilterCSV(filename string) (<-chan []models.DeliveryPoint, <-chan error) {
+	pointsChan := make(chan []models.DeliveryPoint, 100)
+	errChan := make(chan error, 1)
 
-func ReadAndFilterCSV(filename string) ([]DeliveryPoint, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("error opening file: %v", err)
-	}
-	defer file.Close()
+	go func() {
+		defer close(pointsChan)
+		defer close(errChan)
 
-	reader := csv.NewReader(file)
-	reader.FieldsPerRecord = 4 // We expect 4 fields per record
-
-	// Skip header
-	if _, err := reader.Read(); err != nil {
-		return nil, fmt.Errorf("error reading header: %v", err)
-	}
-
-	var filteredData []DeliveryPoint
-	var prevPoint *DeliveryPoint
-
-	for {
-		record, err := reader.Read()
-		if err == io.EOF {
-			break
-		}
+		file, err := os.Open(filename)
 		if err != nil {
-			return nil, fmt.Errorf("error reading record: %v", err)
+			errChan <- err
+			return
+		}
+		defer file.Close()
+
+		reader := csv.NewReader(bufio.NewReader(file))
+		// Skip header
+		if _, err := reader.Read(); err != nil {
+			errChan <- err
+			return
 		}
 
-		point, err := parseRecord(record)
-		if err != nil {
-			return nil, fmt.Errorf("error parsing record: %v", err)
-		}
+		var currentDelivery []models.DeliveryPoint
+		var currentID int64 = -1
 
-		if prevPoint != nil && prevPoint.ID == point.ID {
-			speed := calculateSpeed(*prevPoint, point)
-			if speed <= 100 { // 100 km/h filter
-				filteredData = append(filteredData, point)
+		for {
+			record, err := reader.Read()
+			if err == io.EOF {
+				if len(currentDelivery) > 0 {
+					pointsChan <- currentDelivery
+				}
+				break
 			}
-		} else {
-			filteredData = append(filteredData, point)
+			if err != nil {
+				errChan <- err
+				return
+			}
+
+			point, err := parseDeliveryPoint(record)
+			if err != nil {
+				errChan <- fmt.Errorf("error parsing record: %v", err)
+				continue
+			}
+
+			if point.ID != currentID {
+				if len(currentDelivery) > 0 {
+					pointsChan <- currentDelivery
+				}
+				currentDelivery = []models.DeliveryPoint{point}
+				currentID = point.ID
+			} else {
+				if len(currentDelivery) > 0 {
+					prevPoint := currentDelivery[len(currentDelivery)-1]
+					speed := calculateSpeed(prevPoint, point)
+					if speed <= 100 { // 100 km/h filter
+						currentDelivery = append(currentDelivery, point)
+					}
+				} else {
+					currentDelivery = append(currentDelivery, point)
+				}
+			}
 		}
+	}()
 
-		prevPoint = &point
-	}
-
-	return filteredData, nil
+	return pointsChan, errChan
 }
 
-func parseRecord(record []string) (DeliveryPoint, error) {
+func parseDeliveryPoint(record []string) (models.DeliveryPoint, error) {
+	if len(record) != 4 {
+		return models.DeliveryPoint{}, fmt.Errorf("invalid record length")
+	}
+
 	id, err := strconv.ParseInt(record[0], 10, 64)
 	if err != nil {
-		return DeliveryPoint{}, fmt.Errorf("invalid id: %v", err)
+		return models.DeliveryPoint{}, err
 	}
 
 	lat, err := strconv.ParseFloat(record[1], 64)
 	if err != nil {
-		return DeliveryPoint{}, fmt.Errorf("invalid latitude: %v", err)
+		return models.DeliveryPoint{}, err
 	}
 
 	lng, err := strconv.ParseFloat(record[2], 64)
 	if err != nil {
-		return DeliveryPoint{}, fmt.Errorf("invalid longitude: %v", err)
+		return models.DeliveryPoint{}, err
 	}
 
 	timestamp, err := strconv.ParseInt(record[3], 10, 64)
 	if err != nil {
-		return DeliveryPoint{}, fmt.Errorf("invalid timestamp: %v", err)
+		return models.DeliveryPoint{}, err
 	}
 
-	return DeliveryPoint{ID: id, Lat: lat, Lng: lng, Timestamp: timestamp}, nil
+	return models.DeliveryPoint{
+		ID:        id,
+		Latitude:  lat,
+		Longitude: lng,
+		Timestamp: time.Unix(timestamp, 0),
+	}, nil
 }
 
-func calculateSpeed(p1, p2 DeliveryPoint) float64 {
-	distance := utils.HaversineDistance(p1.Lat, p1.Lng, p2.Lat, p2.Lng)
-	duration := time.Duration(p2.Timestamp-p1.Timestamp) * time.Second
-	hours := duration.Hours()
-	if hours == 0 {
-		return 0
-	}
-	return distance / hours // km/h
+func calculateSpeed(p1, p2 models.DeliveryPoint) float64 {
+	return utils.CalculateSpeed(p1, p2)
 }
+
+//func calculateSpeed(p1, p2 models.DeliveryPoint) float64 {
+//	// Implementation of speed calculation
+//	// This should use the Haversine distance and time difference
+//	// between the two points
+//	// For brevity, I'm omitting the actual implementation here
+//	return 0 // Replace with actual implementation
+//}

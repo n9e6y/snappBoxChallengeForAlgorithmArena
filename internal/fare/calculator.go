@@ -1,10 +1,12 @@
 package fare
 
 import (
-	"SBCFAA/internal/ingestion"
-	"SBCFAA/pkg/utils"
 	"math"
+	"sync"
 	"time"
+
+	"SBCFAA/internal/models"
+	"SBCFAA/pkg/utils"
 )
 
 const (
@@ -16,43 +18,59 @@ const (
 	MovingSpeedThreshold = 10.0  // km/h
 	NightStartHour       = 0
 	NightEndHour         = 5
+	workerPoolSize       = 5
 )
 
-type FareEstimate struct {
-	DeliveryID int64
-	Fare       float64
-}
+func CalculateFares(deliveries <-chan []models.DeliveryPoint) <-chan models.FareEstimate {
+	estimatesChan := make(chan models.FareEstimate, 100)
 
-func CalculateFares(points []ingestion.DeliveryPoint) []FareEstimate {
-	fareEstimates := make(map[int64]float64)
+	go func() {
+		defer close(estimatesChan)
 
-	for i := 1; i < len(points); i++ {
-		prev := points[i-1]
-		curr := points[i]
-
-		if prev.ID != curr.ID {
-			// New delivery, apply flag charge
-			fareEstimates[curr.ID] = FlagCharge
-			continue
+		var wg sync.WaitGroup
+		for i := 0; i < workerPoolSize; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for delivery := range deliveries {
+					estimate := calculateFareForDelivery(delivery)
+					estimatesChan <- estimate
+				}
+			}()
 		}
 
-		distance := utils.HaversineDistance(prev.Lat, prev.Lng, curr.Lat, curr.Lng)
-		duration := time.Duration(curr.Timestamp-prev.Timestamp) * time.Second
-		speed := calculateSpeed(distance, duration)
+		wg.Wait()
+	}()
 
-		fare := calculateSegmentFare(distance, duration, speed, time.Unix(curr.Timestamp, 0))
-		fareEstimates[curr.ID] += fare
-	}
-
-	return consolidateFares(fareEstimates)
+	return estimatesChan
 }
 
-func calculateSpeed(distance float64, duration time.Duration) float64 {
-	hours := duration.Hours()
-	if hours == 0 {
-		return 0
+func calculateFareForDelivery(delivery []models.DeliveryPoint) models.FareEstimate {
+	if len(delivery) == 0 {
+		return models.FareEstimate{}
 	}
-	return distance / hours // km/h
+
+	totalFare := FlagCharge
+	for i := 1; i < len(delivery); i++ {
+		prevPoint := delivery[i-1]
+		currentPoint := delivery[i]
+
+		distance := utils.HaversineDistance(prevPoint.Latitude, prevPoint.Longitude, currentPoint.Latitude, currentPoint.Longitude)
+		duration := currentPoint.Timestamp.Sub(prevPoint.Timestamp)
+		speed := utils.CalculateSpeed(prevPoint, currentPoint)
+
+		fare := calculateSegmentFare(distance, duration, speed, currentPoint.Timestamp)
+		totalFare += fare
+	}
+
+	if totalFare < MinimumFare {
+		totalFare = MinimumFare
+	}
+
+	return models.FareEstimate{
+		DeliveryID: delivery[0].ID,
+		Fare:       math.Round(totalFare*100) / 100, // Round to 2 decimal places
+	}
 }
 
 func calculateSegmentFare(distance float64, duration time.Duration, speed float64, timestamp time.Time) float64 {
@@ -74,14 +92,13 @@ func isNightTime(t time.Time) bool {
 	return hour >= NightStartHour && hour < NightEndHour
 }
 
-func consolidateFares(fareEstimates map[int64]float64) []FareEstimate {
-	var results []FareEstimate
-	for id, fare := range fareEstimates {
-		// Apply minimum fare
+func consolidateFares(estimates map[int64]float64) []models.FareEstimate {
+	var results []models.FareEstimate
+	for id, fare := range estimates {
 		if fare < MinimumFare {
 			fare = MinimumFare
 		}
-		results = append(results, FareEstimate{
+		results = append(results, models.FareEstimate{
 			DeliveryID: id,
 			Fare:       math.Round(fare*100) / 100, // Round to 2 decimal places
 		})
