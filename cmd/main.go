@@ -14,14 +14,14 @@ import (
 )
 
 func main() {
-	// Define command-line flags
+	// command-line flags
 	inputFile := flag.String("input", "", "Input CSV file path")
 	outputFile := flag.String("output", "fare_estimates.csv", "Output CSV file path")
 	cpuProfile := flag.String("cpuprofile", "", "Write cpu profile to file")
 	memProfile := flag.String("memprofile", "", "Write memory profile to file")
 	flag.Parse()
 
-	// Check if input file is provided
+	//  input file is provided ?
 	if *inputFile == "" {
 		log.Fatal("Please provide an input file using the -input flag")
 	}

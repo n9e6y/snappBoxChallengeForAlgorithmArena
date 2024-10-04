@@ -1,12 +1,12 @@
 package fare
 
 import (
+	"SBCFAA/pkg/utils"
 	"math"
 	"sync"
 	"time"
 
 	"SBCFAA/internal/models"
-	"SBCFAA/pkg/utils"
 )
 
 const (
@@ -15,7 +15,7 @@ const (
 	MovingRateDay        = 0.74  // per km
 	MovingRateNight      = 1.30  // per km
 	IdleRate             = 11.90 // per hour
-	MovingSpeedThreshold = 10.0  // km/h
+	MovingSpeedThreshold = 10.0  // km/hour
 	NightStartHour       = 0
 	NightEndHour         = 5
 	workerPoolSize       = 5
@@ -69,18 +69,16 @@ func calculateFareForDelivery(delivery []models.DeliveryPoint) models.FareEstima
 
 	return models.FareEstimate{
 		DeliveryID: delivery[0].ID,
-		Fare:       math.Round(totalFare*100) / 100, // Round to 2 decimal places
+		Fare:       math.Round(totalFare*100) / 100, // Round to 2decimal
 	}
 }
 
 func calculateSegmentFare(distance float64, duration time.Duration, speed float64, timestamp time.Time) float64 {
-	if speed <= MovingSpeedThreshold {
-		// Idle state
+	if speed <= MovingSpeedThreshold { // Idle state
 		return IdleRate * duration.Hours()
 	}
 
-	// Moving state
-	rate := MovingRateDay
+	rate := MovingRateDay // Moving state
 	if isNightTime(timestamp) {
 		rate = MovingRateNight
 	}
@@ -90,18 +88,4 @@ func calculateSegmentFare(distance float64, duration time.Duration, speed float6
 func isNightTime(t time.Time) bool {
 	hour := t.Hour()
 	return hour >= NightStartHour && hour < NightEndHour
-}
-
-func consolidateFares(estimates map[int64]float64) []models.FareEstimate {
-	var results []models.FareEstimate
-	for id, fare := range estimates {
-		if fare < MinimumFare {
-			fare = MinimumFare
-		}
-		results = append(results, models.FareEstimate{
-			DeliveryID: id,
-			Fare:       math.Round(fare*100) / 100, // Round to 2 decimal places
-		})
-	}
-	return results
 }
