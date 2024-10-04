@@ -116,11 +116,3 @@ func parseDeliveryPoint(record []string) (models.DeliveryPoint, error) {
 func calculateSpeed(p1, p2 models.DeliveryPoint) float64 {
 	return utils.CalculateSpeed(p1, p2)
 }
-
-//func calculateSpeed(p1, p2 models.DeliveryPoint) float64 {
-//	// Implementation of speed calculation
-//	// This should use the Haversine distance and time difference
-//	// between the two points
-//	// For brevity, I'm omitting the actual implementation here
-//	return 0 // Replace with actual implementation
-//}
