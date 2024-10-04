@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -29,8 +30,7 @@ func ReadAndFilterCSV(filename string) (<-chan []models.DeliveryPoint, <-chan er
 		defer file.Close()
 
 		reader := csv.NewReader(bufio.NewReader(file))
-		// Skip header
-		if _, err := reader.Read(); err != nil {
+		if _, err := reader.Read(); err != nil { // Skip header
 			errChan <- err
 			return
 		}
@@ -38,12 +38,17 @@ func ReadAndFilterCSV(filename string) (<-chan []models.DeliveryPoint, <-chan er
 		var currentDelivery []models.DeliveryPoint
 		var currentID int64 = -1
 
+		sendDelivery := func() {
+			if len(currentDelivery) > 0 {
+				pointsChan <- currentDelivery
+				currentDelivery = nil
+			}
+		}
+
 		for {
 			record, err := reader.Read()
 			if err == io.EOF {
-				if len(currentDelivery) > 0 {
-					pointsChan <- currentDelivery
-				}
+				sendDelivery() // Send the last group
 				break
 			}
 			if err != nil {
@@ -58,9 +63,7 @@ func ReadAndFilterCSV(filename string) (<-chan []models.DeliveryPoint, <-chan er
 			}
 
 			if point.ID != currentID {
-				if len(currentDelivery) > 0 {
-					pointsChan <- currentDelivery
-				}
+				sendDelivery() // Send the previous group
 				currentDelivery = []models.DeliveryPoint{point}
 				currentID = point.ID
 			} else {
@@ -114,13 +117,9 @@ func parseDeliveryPoint(record []string) (models.DeliveryPoint, error) {
 }
 
 func calculateSpeed(p1, p2 models.DeliveryPoint) float64 {
-	return utils.CalculateSpeed(p1, p2)
+	speed := utils.CalculateSpeed(p1, p2)
+	if math.IsInf(speed, 1) {
+		return 0
+	}
+	return speed
 }
-
-//func calculateSpeed(p1, p2 models.DeliveryPoint) float64 {
-//	// Implementation of speed calculation
-//	// This should use the Haversine distance and time difference
-//	// between the two points
-//	// For brevity, I'm omitting the actual implementation here
-//	return 0 // Replace with actual implementation
-//}

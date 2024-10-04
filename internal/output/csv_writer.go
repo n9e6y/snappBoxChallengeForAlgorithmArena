@@ -1,18 +1,17 @@
 package output
 
 import (
+	"SBCFAA/internal/models"
 	"encoding/csv"
 	"log"
 	"os"
 	"strconv"
 	"sync"
-
-	"SBCFAA/internal/models"
 )
 
-const bufferSize = 1000
+const bufferSize = 1000 //change buffer size
 
-func WriteCSV(filename string, estimates <-chan []models.FareEstimate) error {
+func WriteCSV(filename string, estimates <-chan models.FareEstimate) error {
 	file, err := os.Create(filename)
 	if err != nil {
 		return err
@@ -22,8 +21,7 @@ func WriteCSV(filename string, estimates <-chan []models.FareEstimate) error {
 	writer := csv.NewWriter(file)
 	defer writer.Flush()
 
-	// Write header
-	if err := writer.Write([]string{"id_delivery", "fare_estimate"}); err != nil {
+	if err := writer.Write([]string{"id_delivery", "fare_estimate"}); err != nil { // Write header
 		return err
 	}
 
@@ -34,25 +32,22 @@ func WriteCSV(filename string, estimates <-chan []models.FareEstimate) error {
 		defer wg.Done()
 		buffer := make([][]string, 0, bufferSize)
 
-		for chunk := range estimates {
-			for _, estimate := range chunk {
-				buffer = append(buffer, []string{
-					strconv.FormatInt(estimate.DeliveryID, 10),
-					strconv.FormatFloat(estimate.Fare, 'f', 2, 64),
-				})
+		for estimate := range estimates {
+			buffer = append(buffer, []string{
+				strconv.FormatInt(estimate.DeliveryID, 10),
+				strconv.FormatFloat(estimate.Fare, 'f', 2, 64),
+			})
 
-				if len(buffer) >= bufferSize {
-					if err := writer.WriteAll(buffer); err != nil {
-						// Log the error, but continue processing
-						log.Printf("Error writing to CSV: %v", err)
-					}
-					buffer = buffer[:0] // Clear the buffer
+			if len(buffer) >= bufferSize {
+				if err := writer.WriteAll(buffer); err != nil {
+					// Log the error, but continue processing
+					log.Printf("Error writing to CSV: %v", err)
 				}
+				buffer = buffer[:0] // Clear the buffer
 			}
 		}
 
-		// Write any remaining records
-		if len(buffer) > 0 {
+		if len(buffer) > 0 { // Write any remaining records
 			if err := writer.WriteAll(buffer); err != nil {
 				log.Printf("Error writing final buffer to CSV: %v", err)
 			}
